@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { getClaudeDir, getConfigDir } = require('./ponytail-config');
+const { getClaudeDir, getConfigDir, normalizePersistedMode } = require('./ponytail-config');
 
 const STATE_FILE = '.ponytail-active';
 
@@ -36,24 +36,63 @@ if (isCopilot) stateDir = process.env.COPILOT_PLUGIN_DATA || getClaudeDir();
 if (isQoder) stateDir = path.join(os.homedir(), '.qoder');
 if (isCursor) stateDir = path.join(os.homedir(), '.cursor');
 
-const statePath = path.join(stateDir, STATE_FILE);
+// Qoder has no SessionStart event, so "no flag yet" is how the first prompt of a
+// session is recognised. With one shared flag that meant turning ponytail off (by
+// deleting the flag) looked like a brand-new session on the very next prompt, and
+// the default level came straight back. Qoder names each session, so its state is
+// kept per session and "off" is written explicitly instead of being an absence.
+function qoderSessionKey(id) {
+  const safe = String(id || '').replace(/[^A-Za-z0-9_-]/g, '');
+  return safe.slice(0, 64) || 'default';
+}
+const statePath = isQoder
+  ? path.join(stateDir, STATE_FILE + '-' + qoderSessionKey(process.env.QODER_SESSION_ID))
+  : path.join(stateDir, STATE_FILE);
+
+// Per-session files are tiny, but they should not pile up forever.
+const QODER_STATE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+function pruneStaleQoderState(now = Date.now()) {
+  if (!isQoder) return;
+  try {
+    for (const name of fs.readdirSync(stateDir)) {
+      if (!name.startsWith(STATE_FILE + '-')) continue;
+      const file = path.join(stateDir, name);
+      if (file === statePath) continue;
+      try {
+        if (now - fs.statSync(file).mtimeMs > QODER_STATE_MAX_AGE_MS) fs.unlinkSync(file);
+      } catch (_) {}
+    }
+  } catch (_) {}
+}
 
 function setMode(mode) {
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   fs.writeFileSync(statePath, mode);
 }
 
+// Turning ponytail off. On Qoder the flag records "off" so the next prompt in this
+// session does not mistake the absence for a fresh session. Elsewhere SessionStart
+// sets the flag, so absence already means off and the statusline relies on it.
 function clearMode() {
+  if (isQoder) {
+    try { setMode('off'); } catch (e) {}
+    return;
+  }
   try { fs.unlinkSync(statePath); } catch (e) {}
 }
 
-// Live mode written by activate/mode-tracker. Absent flag = ponytail off.
+// Live mode written by activate/mode-tracker: a known level, 'off' when recorded
+// explicitly, or null when there is no flag. Anything else in the file is treated
+// as no flag rather than echoed back to the user.
 function readMode() {
+  let raw;
   try {
-    return fs.readFileSync(statePath, 'utf8').trim() || null;
+    raw = fs.readFileSync(statePath, 'utf8').trim().toLowerCase();
   } catch (e) {
     return null;
   }
+  if (raw === 'off') return 'off';
+  return normalizePersistedMode(raw);
 }
 
 // Cursor's always-on project rule (.cursor/rules/ponytail.mdc) already puts the
@@ -131,7 +170,10 @@ function writeHookOutput(event, mode, context = '') {
 }
 
 module.exports = {
+  STATE_FILE,
   clearMode,
+  pruneStaleQoderState,
+  statePath,
   cursorRuleNotice,
   cursorRulePath,
   isCodex,

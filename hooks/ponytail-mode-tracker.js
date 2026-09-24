@@ -9,10 +9,14 @@ const {
   cursorRulePath,
   isCursor,
   isQoder,
+  pruneStaleQoderState,
   readMode,
   setMode,
   writeHookOutput,
 } = require('./ponytail-runtime');
+
+const LEVELS = ['lite', 'full', 'ultra', 'off'];
+const DEFAULT_LEVELS = ['off', 'lite', 'full', 'ultra'];
 const { getPonytailInstructions } = require('./ponytail-instructions');
 
 let input = '';
@@ -58,21 +62,33 @@ function finish() {
         // valid default (#377), so only off/lite/full/ultra are accepted.
         if (arg === 'default') {
           const dmode = parts[2];
-          if (dmode === 'off' || dmode === 'lite' || dmode === 'full' || dmode === 'ultra') {
+          if (DEFAULT_LEVELS.includes(dmode)) {
             writeDefaultMode(dmode);
             writeHookOutput('UserPromptSubmit', dmode, 'PONYTAIL DEFAULT SET — new sessions start in ' + dmode + '.');
+          } else {
+            // Silence here used to look like success; nothing was written.
+            writeHookOutput('UserPromptSubmit', readMode() || getDefaultMode(),
+              'PONYTAIL DEFAULT NOT CHANGED — ' + (dmode ? "'" + dmode + "' is not a level" : 'no level given') +
+              '. Use: /ponytail default off|lite|full|ultra.');
           }
           return; // don't fall through to the session-mode switch
         }
-        if (arg === 'lite') mode = 'lite';
-        else if (arg === 'full') mode = 'full';
-        else if (arg === 'ultra') mode = 'ultra';
-        else if (arg === 'off') mode = 'off';
-        else if (arg === '') {
+        if (LEVELS.includes(arg)) {
+          mode = arg;
+        } else if (arg === '') {
           isReportOnly = true;
-          mode = readMode() || getDefaultMode();
+          // Every host but Qoder writes the flag at session start, so no flag
+          // means ponytail is off there. Qoder writes it on the first prompt,
+          // so there no flag means "not started yet" and the default applies.
+          mode = readMode() || (isQoder ? getDefaultMode() : 'off');
         } else {
-          mode = getDefaultMode();
+          // A typo such as "lit" used to switch to the default level and report
+          // success. Leave the mode alone and say what was expected.
+          const current = readMode() || getDefaultMode();
+          writeHookOutput('UserPromptSubmit', current,
+            "PONYTAIL MODE NOT CHANGED — '" + arg + "' is not a level. Use: /ponytail lite|full|ultra|off. " +
+            'Current level: ' + current + '.');
+          return;
         }
       }
 
@@ -80,7 +96,7 @@ function finish() {
         writeHookOutput(
           'UserPromptSubmit',
           mode,
-          'PONYTAIL MODE ACTIVE — level: ' + mode,
+          mode === 'off' ? 'PONYTAIL MODE OFF' : 'PONYTAIL MODE ACTIVE — level: ' + mode,
         );
       } else if (mode && mode !== 'off') {
         setMode(mode);
@@ -121,11 +137,11 @@ function finish() {
     if (isQoder && !deactivated) {
       let currentMode = readMode();
       if (!currentMode) {
-        // First prompt in session — initialize from config/env default
+        // First prompt of this session (its state is per session, and "off" is
+        // recorded explicitly, so absence can no longer mean "turned off").
         currentMode = getDefaultMode();
-        if (currentMode !== 'off') {
-          try { setMode(currentMode); } catch (e) {}
-        }
+        try { setMode(currentMode); } catch (e) {}
+        pruneStaleQoderState();
       }
       if (currentMode && currentMode !== 'off') {
         // ponytail: one JSON per invocation — mode-switch confirmation is

@@ -12,6 +12,12 @@ try {
     exit 0
 }
 
+# Only a known level is ever printed (see ponytail-statusline.sh).
+$Mode = $Mode.ToLowerInvariant()
+if (@("", "lite", "full", "ultra", "review") -notcontains $Mode) {
+    exit 0
+}
+
 $Esc = [char]27
 # ultra is the high-intensity mode; flag it amber so it stands out from the
 # default green. The level is still in the text, so color is a redundant cue.
