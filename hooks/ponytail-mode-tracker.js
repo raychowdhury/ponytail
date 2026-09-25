@@ -9,9 +9,11 @@ const {
   cursorRulePath,
   isCursor,
   isQoder,
-  pruneStaleQoderState,
+  pruneStaleSessionState,
   readMode,
   setMode,
+  touchSession,
+  useSession,
   writeHookOutput,
 } = require('./ponytail-runtime');
 
@@ -28,6 +30,10 @@ function finish() {
   try {
     // Strip UTF-8 BOM some shells prepend when piping (breaks JSON.parse)
     const data = JSON.parse(input.replace(/^\uFEFF/, ''));
+    // State is per session when the host names one; this prompt's session is now the most
+    // recently active, which is what the subagent hook falls back to.
+    useSession(data);
+    touchSession();
     const prompt = (data.prompt || '').trim().toLowerCase();
 
     // Cursor with the always-on rule in the workspace: no hook can change or
@@ -141,7 +147,7 @@ function finish() {
         // recorded explicitly, so absence can no longer mean "turned off").
         currentMode = getDefaultMode();
         try { setMode(currentMode); } catch (e) {}
-        pruneStaleQoderState();
+        pruneStaleSessionState();
       }
       if (currentMode && currentMode !== 'off') {
         // ponytail: one JSON per invocation — mode-switch confirmation is

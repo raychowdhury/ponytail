@@ -16,9 +16,11 @@ function sandbox() {
   const env = { PATH: process.env.PATH, HOME: home, USERPROFILE: home, CLAUDE_CONFIG_DIR: claude,
                 XDG_CONFIG_HOME: path.join(home, '.config') };
   const flag = path.join(claude, '.ponytail-active');
+  // Prompts below name session "s", whose level is kept in its own file.
+  const sessionFlag = path.join(claude, '.ponytail-active-s');
   const run = (script, input = '') => spawnSync(process.execPath, [path.join(hooks, script)], { env, input, encoding: 'utf8' });
   const prompt = text => run('ponytail-mode-tracker.js', JSON.stringify({ session_id: 's', prompt: text })).stdout;
-  return { home, env, flag, run, prompt, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
+  return { home, env, flag, sessionFlag, run, prompt, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
 }
 
 test('a mistyped level leaves the mode alone and says what was expected', () => {
@@ -29,7 +31,7 @@ test('a mistyped level leaves the mode alone and says what was expected', () => 
     const out = s.prompt('/ponytail lit');
     assert.match(out, /NOT CHANGED — 'lit' is not a level/);
     assert.match(out, /Current level: ultra/);
-    assert.equal(fs.readFileSync(s.flag, 'utf8'), 'ultra', 'a typo must not reset the level to the default');
+    assert.equal(fs.readFileSync(s.sessionFlag, 'utf8'), 'ultra', 'a typo must not reset the level to the default');
   } finally { s.cleanup(); }
 });
 

@@ -1,7 +1,27 @@
 #!/usr/bin/env bash
 # CLAUDE_CONFIG_DIR overrides ~/.claude, matching where the hooks write the flag (issue #34)
-flag="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/.ponytail-active"
-[ -f "$flag" ] || exit 0
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+# Claude Code pipes the session as JSON on stdin. Each session keeps its own level in
+# .ponytail-active-<session_id>, so this badge shows this session's level rather than whichever
+# session changed the shared flag last. read -t never blocks for more than a second.
+input=""
+if [ ! -t 0 ]; then
+    IFS= read -r -t 1 -d '' input || true
+fi
+sid=$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 | tr -cd 'A-Za-z0-9_-' | cut -c1-64)
+
+flag=""
+if [ -n "$sid" ] && [ -f "$dir/.ponytail-active-$sid" ]; then
+    flag="$dir/.ponytail-active-$sid"
+elif [ -f "$dir/.ponytail-active" ]; then
+    # A host that names no session, or a session started before state was per session.
+    flag="$dir/.ponytail-active"
+elif [ -z "$sid" ]; then
+    # No session name at all: the most recently active session is the best guess.
+    flag=$(ls -t "$dir"/.ponytail-active-* 2>/dev/null | head -n1)
+fi
+[ -n "$flag" ] && [ -f "$flag" ] || exit 0
 
 mode=$(head -n1 "$flag" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 
